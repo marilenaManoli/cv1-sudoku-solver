@@ -1,12 +1,3 @@
-# Quick summary of the full flow
-# find_edges() → detect grid edges.
-# highlight_edges() → connect broken lines (optional).
-# find_contours() → get all contours from edges.
-# get_max_contour() → pick the largest (the Sudoku grid).
-# find_corners() → approximate contour → 4 corner points.
-# order_corners() → reorder to TL, TR, BR, BL.
-# frontalize_image() → warp grid to a perfect square.
-
 import os
 import numpy as np
 import cv2
@@ -34,17 +25,15 @@ def find_edges(image):
     Returns:
         edges (np.array): binary mask (white = edge, black = background)
     """
-    # Typically you blur the image first to reduce noise,
-    # then run cv2.Canny() with two thresholds.
-    # Example: edges = cv2.Canny(image, threshold1=50, threshold2=150)
-    # Experiment with the thresholds to make grid lines clear.
-
+    
     # BEGIN YOUR CODE
-    # edges = ...
-    # return edges
+    # image is grayscale uint8 (H, W)
+    v = np.median(image)
+    lower = int(max(0, 0.66 * v))
+    upper = int(min(255, 1.33 * v))
+    edges = cv2.Canny(image, lower, upper, L2gradient=True)
+    return edges
     # END YOUR CODE
-
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -61,19 +50,13 @@ def highlight_edges(edges):
     Returns:
         highlighted_edges (np.array): improved binary mask
     """
-    # Use morphological operations (dilate + close) with small kernels
-    # to strengthen the grid boundaries.
-    # Example:
-    # kernel = np.ones((3,3), np.uint8)
-    # highlighted_edges = cv2.dilate(edges, kernel, iterations=1)
-    # highlighted_edges = cv2.morphologyEx(highlighted_edges, cv2.MORPH_CLOSE, kernel, iterations=2)
-
     # BEGIN YOUR CODE
-    # highlighted_edges = ...
-    # return highlighted_edges
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel, iterations=2)
+    dilated = cv2.dilate(closed, kernel, iterations=1)
+    return dilated
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -89,16 +72,11 @@ def find_contours(edges):
     Returns:
         contours: list of arrays, each representing a contour
     """
-    # Use cv2.findContours with cv2.RETR_EXTERNAL to get outer contours only.
-    # Example:
-    # contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     # BEGIN YOUR CODE
-    # contours = ...
-    # return contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -115,16 +93,12 @@ def get_max_contour(contours):
     Returns:
         max_contour (np.array): contour with the largest area
     """
-    # You can use cv2.contourArea to compute the area for each contour.
-    # Example:
-    # max_contour = max(contours, key=cv2.contourArea)
-
     # BEGIN YOUR CODE
-    # max_contour = ...
-    # return max_contour
+    if contours is None or len(contours) == 0:
+        raise ValueError("No contours found")
+    return max(contours, key=cv2.contourArea)
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -141,30 +115,19 @@ def order_corners(corners):
     Returns:
         ordered_corners (np.array): same 4 points in fixed order
     """
-    # You can order by the sum (x+y) and difference (x-y):
-    #  - top-left has smallest (x+y)
-    #  - bottom-right has largest (x+y)
-    #  - top-right has smallest (x-y)
-    #  - bottom-left has largest (x-y)
-    #
-    # Example:
-    # s = corners.sum(axis=1)
-    # d = np.diff(corners, axis=1)
-    # tl = corners[np.argmin(s)]
-    # br = corners[np.argmax(s)]
-    # tr = corners[np.argmin(d)]
-    # bl = corners[np.argmax(d)]
 
     # BEGIN YOUR CODE
-    # top_left = ...
-    # top_right = ...
-    # bottom_right = ...
-    # bottom_left = ...
-    # ordered_corners = np.array([top_left, top_right, bottom_right, bottom_left])
-    # return ordered_corners
+    c = np.array(corners, dtype=np.float32).reshape(-1, 2)
+    s = c.sum(axis=1)              # x + y
+    d = np.diff(c, axis=1).ravel() # x - y
+    tl = c[np.argmin(s)]
+    br = c[np.argmax(s)]
+    tr = c[np.argmin(d)]
+    bl = c[np.argmax(d)]
+    ordered_corners = np.array([tl, tr, br, bl], dtype=np.float32)
+    return ordered_corners
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -182,24 +145,29 @@ def find_corners(contour, epsilon=0.42):
     Returns:
         ordered_corners (np.array): [4, 2] points ordered TL, TR, BR, BL
     """
-    # Use cv2.arcLength(contour, True) to get the contour perimeter,
-    # then cv2.approxPolyDP(contour, epsilon * perimeter, True)
-    # to simplify it into a polygon.
-    #
-    # If it doesn’t give exactly 4 corners, fake some to avoid crashing.
-
     # BEGIN YOUR CODE
-    # corners = ...
-    # if len(corners) != 4:
-    #     corners += np.array([[0,0], [0,1], [1,0], [1,1]])
-    #     corners = corners[:4]
-    # ordered_corners = order_corners(corners)
-    # return ordered_corners
+    peri = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, epsilon * peri, True)
+
+    # If not 4 points, sweep a range of epsilons to find 4
+    if len(approx) != 4:
+        for e in np.linspace(0.01, 0.10, 10):
+            approx = cv2.approxPolyDP(contour, e * peri, True)
+            if len(approx) == 4:
+                break
+
+    # Fallback to min-area rectangle if still not 4
+    if len(approx) != 4:
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        approx = box.astype(np.float32)
+
+    corners = approx.reshape(-1, 2).astype(np.float32)
+    return corners
     # END YOUR CODE
 
-    raise NotImplementedError
 
-
+     
 # ---------------------------------------------------------------------
 # 7. RESCALE IMAGE (OPTIONAL)
 # ---------------------------------------------------------------------
@@ -215,15 +183,14 @@ def rescale_image(image, scale=0.42):
     Returns:
         rescaled_image (np.array): 8-bit image resized
     """
-    # Use cv2.resize(image, None, fx=scale, fy=scale)
-    # Keep the same interpolation (e.g. cv2.INTER_AREA).
-
     # BEGIN YOUR CODE
-    # rescaled_image = ...
-    # return rescaled_image
+    h, w = image.shape[:2]
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    rescaled_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return rescaled_image
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -240,15 +207,12 @@ def gaussian_blur(image, sigma):
     Returns:
         blurred_image (np.array): smoothed image
     """
-    # Use cv2.GaussianBlur(image, (kernel_size, kernel_size), sigma)
-    # Example: blurred_image = cv2.GaussianBlur(image, (5,5), sigma)
-
     # BEGIN YOUR CODE
-    # blurred_image = ...
-    # return blurred_image
+    k = max(3, int(2 * round(3 * max(0.1, sigma)) + 1))  # odd kernel size
+    blurred_image = cv2.GaussianBlur(image, (k, k), sigmaX=sigma, sigmaY=sigma)
+    return blurred_image
     # END YOUR CODE
 
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -264,13 +228,11 @@ def distance(point1, point2):
     Returns:
         distance (float)
     """
-    # Use np.linalg.norm(point1 - point2)
     # BEGIN YOUR CODE
-    # distance = ...
-    # return distance
+    p1 = np.asarray(point1, dtype=np.float32)
+    p2 = np.asarray(point2, dtype=np.float32)
+    return float(np.linalg.norm(p1 - p2))
     # END YOUR CODE
-
-    raise NotImplementedError
 
 
 # ---------------------------------------------------------------------
@@ -290,24 +252,25 @@ def frontalize_image(image, ordered_corners):
     """
     top_left, top_right, bottom_right, bottom_left = ordered_corners
 
-    # The side length of the warped image can be the maximum of
-    # the distances between opposite sides.
-    # Example:
-    # side = int(max(distance(tl,tr), distance(tr,br),
-    #                distance(br,bl), distance(bl,tl)))
-
-    # The destination points define a perfect square of that side length.
-
     # BEGIN YOUR CODE
-    # side = ...
-    # destination_points = np.array([[0,0], [side-1,0], [side-1,side-1], [0,side-1]], dtype=np.float32)
-    # transform_matrix = cv2.getPerspectiveTransform(ordered_corners, destination_points)
-    # warped_image = cv2.warpPerspective(image, transform_matrix, (side, side))
-    # assert warped_image.shape[0] == warped_image.shape[1], "height and width must match"
-    # return warped_image
-    # END YOUR CODE
+    top_left, top_right, bottom_right, bottom_left = ordered_corners
 
-    raise NotImplementedError
+    w1 = distance(top_left, top_right)
+    w2 = distance(bottom_left, bottom_right)
+    h1 = distance(top_left, bottom_left)
+    h2 = distance(top_right, bottom_right)
+    side = int(max(w1, w2, h1, h2))
+
+    dst = np.array([[0, 0],
+                    [side - 1, 0],
+                    [side - 1, side - 1],
+                    [0, side - 1]], dtype=np.float32)
+
+    M = cv2.getPerspectiveTransform(ordered_corners.astype(np.float32), dst)
+    warped_image = cv2.warpPerspective(image, M, (side, side))
+    assert warped_image.shape[0] == warped_image.shape[1], "height and width must match"
+    return warped_image
+    # END YOUR CODE
 
 
 # ---------------------------------------------------------------------
@@ -318,20 +281,46 @@ def show_frontalized_images(image_paths, pipeline, figsize=(16, 12)):
     Runs the full pipeline on a list of image paths and displays
     the resulting frontalized Sudoku grids in a grid of subplots.
     """
-    nrows = len(image_paths) // 4 + 1
+    
+    # BEGIN YOUR CODE
+    from const import FRONTALIZED_IMAGES_PATH
+
     ncols = 4
+    nrows = (len(image_paths) + ncols - 1) // ncols
     figure, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
-    if len(axes.shape) == 1:
+    if isinstance(axes, np.ndarray) and axes.ndim == 1:
         axes = axes[np.newaxis, ...]
 
-    for j in range(len(image_paths), nrows * ncols):
-        axis = axes[j // ncols][j % ncols]
-        show_image(np.ones((1, 1, 3)), axis=axis)
-    
+    total_slots = nrows * ncols
+    for j in range(len(image_paths), total_slots):
+        ax = axes[j // ncols][j % ncols]
+        ax.axis("off")
+
+    os.makedirs(FRONTALIZED_IMAGES_PATH, exist_ok=True)
+
     for i, image_path in enumerate(tqdm(image_paths)):
-        axis = axes[i // ncols][i % ncols]
-        axis.set_title(os.path.split(image_path)[1])
-        
+        ax = axes[i // ncols][i % ncols]
+        ax.set_title(os.path.split(image_path)[1])
+
         sudoku_image = read_image(image_path=image_path)
+
+        if sudoku_image.ndim == 2:
+            sudoku_image = cv2.cvtColor(sudoku_image.astype(np.uint8, copy=False), cv2.COLOR_GRAY2BGR)
+        elif sudoku_image.ndim == 3 and sudoku_image.shape[2] == 1:
+            sudoku_image = np.repeat(sudoku_image, 3, axis=2)
+        elif sudoku_image.ndim == 3 and sudoku_image.shape[2] == 4:
+            sudoku_image = sudoku_image[:, :, :3]
+
         frontalized_image, _ = pipeline(sudoku_image)
-        show_image(frontalized_image, axis=axis, as_gray=True)
+
+        show_image(frontalized_image, axis=ax, as_gray=True)
+
+        out_path = os.path.join(FRONTALIZED_IMAGES_PATH, os.path.basename(image_path))
+        if frontalized_image.dtype != np.uint8:
+            frontalized_image = frontalized_image.astype(np.uint8)
+        if frontalized_image.ndim == 3 and frontalized_image.shape[2] == 3:
+            to_save = cv2.cvtColor(frontalized_image, cv2.COLOR_RGB2BGR)
+        else:
+            to_save = frontalized_image
+        cv2.imwrite(out_path, to_save)
+    # END YOUR CODE
